@@ -1,0 +1,38 @@
+body {
+  font-family: Arial, sans-serif;
+  padding: 20px;
+}
+
+h1 {
+  text-align: center;
+}
+
+table {
+  width: 100%;
+  border-collapse: collapse;
+  margin-top: 20px;
+}
+
+th, td {
+  border: 1px solid #ccc;
+  padding: 5px;
+  text-align: center;
+}
+
+td.low {
+  background-color: #f8d7da;
+}
+
+thead {
+  background-color: #f1f1f1;
+}
+
+/* Add this in your CSS file */
+.low {
+  background-color: red;
+  color: white;  /* Make text stand out */
+}
+
+.normal {
+  background-color: white;  /* Reset background for cells with enough volunteers */
+}
