@@ -1,128 +1,105 @@
-function parseUtcTimeParts(datetime) {
-  // e.g. "2025-04-20T22:00:00.000Z"
-  const [datePart, timePart] = datetime.split("T");
-  const [hour, minute] = timePart.split(":");
-  return {
-    date: datePart,
-    hour: parseInt(hour, 10),
-    minute: parseInt(minute, 10),
-  };
-}
-
+// Helper function to group shifts into 30-minute slots and count distinct volunteers
 function groupShiftsIntoSlots(shifts) {
-  const slotMap = {};
+  const slots = [];
 
   shifts.forEach((shift) => {
-    const start = parseUtcTimeParts(shift.start_datetime);
-    const durationMinutes = shift.duration / 60;
+    const shiftStart = new Date(shift.start_datetime);
+    const shiftEnd = new Date(shiftStart.getTime() + shift.duration * 1000);
 
-    let slotDate = start.date;
-    let slotHour = start.hour;
-    let slotMinute = start.minute;
+    // Create 30-minute slots and group volunteers into them
+    for (
+      let currentSlot = new Date(shiftStart);
+      currentSlot < shiftEnd;
+      currentSlot.setMinutes(currentSlot.getMinutes() + 30)
+    ) {
+      const slotStartTime = new Date(currentSlot);
+      const slotEndTime = new Date(currentSlot.getTime() + 30 * 60 * 1000);
 
-    const totalSlots = Math.ceil(durationMinutes / 30);
+      // Check if this slot already exists
+      let slot = slots.find(
+        (s) => s.start.getTime() === slotStartTime.getTime()
+      );
 
-    for (let i = 0; i < totalSlots; i++) {
-      const hourStr = String(slotHour).padStart(2, "0");
-      const minuteStr = String(slotMinute).padStart(2, "0");
-      const timeSlot = `${hourStr}:${minuteStr}`;
-
-      if (!slotMap[slotDate]) slotMap[slotDate] = {};
-      if (!slotMap[slotDate][timeSlot]) slotMap[slotDate][timeSlot] = [];
-
-      const names = shift.volunteers.map(v => v.name);
-      slotMap[slotDate][timeSlot].push(...names);
-
-      // Advance 30 minutes manually
-      slotMinute += 30;
-      if (slotMinute >= 60) {
-        slotMinute = 0;
-        slotHour += 1;
-        if (slotHour === 24) {
-          slotHour = 0;
-          // Move to next day
-          const nextDate = new Date(`${slotDate}T00:00:00Z`);
-          nextDate.setUTCDate(nextDate.getUTCDate() + 1);
-          slotDate = nextDate.toISOString().split("T")[0];
-        }
+      if (!slot) {
+        slot = {
+          start: slotStartTime,
+          end: slotEndTime,
+          volunteerIds: new Set(), // Set to track unique volunteer IDs
+        };
+        slots.push(slot);
       }
+
+      // Loop through the shift's volunteers and add their IDs to the Set
+      shift.volunteers.forEach((volunteer) => {
+        slot.volunteerIds.add(volunteer.id); // Use volunteer id for uniqueness
+      });
     }
   });
 
-  return slotMap;
+  // Convert sets to counts for rendering
+  return slots.map((slot) => ({
+    start: slot.start,
+    end: slot.end,
+    volunteerCount: slot.volunteerIds.size, // Count unique volunteers
+  }));
 }
 
-function renderTable(slotMap) {
-  const container = document.getElementById("rota-table-container");
-  container.innerHTML = "";
-
-  const table = document.createElement("table");
-  table.className = "rota-table";
-
-  const timeSlots = Array.from({ length: 48 }, (_, i) => {
-    const hours = String(Math.floor(i / 2)).padStart(2, "0");
-    const minutes = i % 2 === 0 ? "00" : "30";
-    return `${hours}:${minutes}`;
-  });
-
-  const days = Object.keys(slotMap).sort();
-
-  // Header row
-  const headerRow = document.createElement("tr");
-  const timeHeader = document.createElement("th");
-  timeHeader.textContent = "Time";
-  headerRow.appendChild(timeHeader);
-
-  days.forEach((day) => {
-    const th = document.createElement("th");
-    th.textContent = day;
-    headerRow.appendChild(th);
-  });
-  table.appendChild(headerRow);
-
-  // Time rows
-  timeSlots.forEach((slot) => {
-    const row = document.createElement("tr");
-    const timeCell = document.createElement("td");
-    timeCell.textContent = slot;
-    row.appendChild(timeCell);
-
-    days.forEach((day) => {
-      const cell = document.createElement("td");
-      const names = slotMap[day]?.[slot] || [];
-      cell.textContent = names.join(", ");
-
-      if (names.length < 2) {
-        cell.style.backgroundColor = "#f8d7da";
-      }
-
-      row.appendChild(cell);
-    });
-
-    table.appendChild(row);
-  });
-
-  container.appendChild(table);
-}
-
+// Fetch and process rota
 async function loadRota() {
   try {
-    const response = await fetch("http://localhost:3000/api/rota");
+    const response = await fetch('http://localhost:3000/api/rota');
     const data = await response.json();
 
-    if (!Array.isArray(data)) {
-      throw new Error("Rota data is not an array");
+    if (!data || !Array.isArray(data.shifts)) {
+      throw new Error('Rota data malformed or missing.');
     }
 
-    console.log("Raw rota data from API:", data);
-
-    const slotMap = groupShiftsIntoSlots(data);
-    renderTable(slotMap);
+    const slots = groupShiftsIntoSlots(data.shifts);
+    renderTable(slots);
   } catch (error) {
-    console.error("Error in loadRota:", error);
-    document.getElementById("rota-table-container").textContent =
-      "Failed to load rota.";
+    console.error('Error loading rota:', error);
+    document.getElementById('rota-table-container').innerHTML =
+      'Failed to load rota.';
   }
 }
 
+// Render table showing count of volunteers in each time slot
+function renderTable(slots) {
+  const container = document.getElementById('rota-table-container');
+  container.innerHTML = '';
+
+  const table = document.createElement('table');
+  const thead = document.createElement('thead');
+  const tbody = document.createElement('tbody');
+
+  // Table header
+  const headerRow = document.createElement('tr');
+  headerRow.innerHTML = `
+    <th>Time Slot</th>
+    <th>Number of Volunteers</th>
+  `;
+  thead.appendChild(headerRow);
+
+  // Table rows (with volunteer count only)
+  slots.forEach((slot) => {
+    const row = document.createElement('tr');
+    row.innerHTML = `
+      <td>${slot.start.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      })} - ${slot.end.toLocaleTimeString([], {
+        hour: '2-digit',
+        minute: '2-digit',
+      })}</td>
+      <td>${slot.volunteerCount}</td> <!-- This will display the number of volunteers -->
+    `;
+    tbody.appendChild(row);
+  });
+
+  table.appendChild(thead);
+  table.appendChild(tbody);
+  container.appendChild(table);
+}
+
+// Load rota on page load
 loadRota();
